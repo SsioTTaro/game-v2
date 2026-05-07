@@ -80,7 +80,7 @@ Kotlin で書ける利点はあるが、Web ターゲットのエコシステム
 ```
 GitHub リポジトリに push
   → Cloudflare Pages が検知
-  → Vite ビルド実行（npm run build）
+  → Vite ビルド実行（pnpm run build）
   → dist/ の成果物を CDN に自動配信
 ```
 
@@ -162,7 +162,7 @@ const { data } = await supabase
 
 ## 次のステップ
 
-1. **Phaser プロジェクトの初期セットアップ**：`npm create @phaserjs/game@latest` でテンプレート生成（TypeScript + Vite 選択）
+1. **Phaser プロジェクトの初期セットアップ**：`pnpm create @phaserjs/game@latest` でテンプレート生成（TypeScript + Vite 選択）
 2. **Supabase プロジェクト作成**：supabase.com でプロジェクト作成、scores テーブル定義、RLS 設定
 3. **Cloudflare Pages 連携**：GitHub リポジトリ作成 → Cloudflare Pages でプロジェクト作成・連携
 4. **プロトタイプ開発**：ゲーム本体の基本実装 → スコア送信・ランキング取得の統合
