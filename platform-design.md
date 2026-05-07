@@ -2,7 +2,7 @@
 
 ## ステータス
 
-**ドラフト** — 2026年5月7日
+**ドラフト** — 2026年5月7日（UIレイヤーは素のHTML/CSS/TSで実装、ゲーム本体のみ Phaser を使用）
 
 ---
 
@@ -30,54 +30,91 @@
 
 ## 2. プラットフォーム構成
 
-### 2-1. 画面遷移
+### 2-1. 画面遷移と実装世界の境界
+
+プラットフォームは **HTML 世界（素のHTML/CSS/TS）** と **Phaser 世界（個別ゲーム本体）** の二層構成。プラットフォーム画面は HTML、ゲーム本体だけ Phaser キャンバスを mount する。
 
 ```
-[Boot] → [Title]
-            ↓
-       [GameSelect] ←──┐
-            ↓          │
-       [個別ゲーム本体] ──┘
-            ↓
-       [Result]
-            ↓
-       [Ranking]（個別ゲーム単位）
+[index.html / Boot]
+        ↓
+   [Title]                       ← HTML 世界
+        ↓
+   [GameSelect] ←──┐
+        ↓          │
+ ┌──────────────┐  │
+ │ 個別ゲーム本体 │  │            ← Phaser 世界（PhaserHost が <canvas> を mount）
+ │  (Phaser)    │  │
+ └──────────────┘  │
+        ↓          │
+   [Result]        │             ← HTML 世界
+        ↓          │
+   [Ranking] ──────┘             ← HTML 世界（ゲームごとに独立）
+
+   [Settings]                    ← HTML 世界（任意の場所から開ける）
 ```
 
-| 画面 | 役割 |
-|------|------|
-| Boot | アセットロード |
-| Title | プラットフォームの顔。立ち絵、ロゴ、「あそぶ」「設定」 |
-| GameSelect | リリース済みゲームを一覧表示。各ゲームをカード化 |
-| 個別ゲーム本体 | 各ゲームが独自にシーン管理 |
-| Result | ゲーム終了後のスコア表示。ランキング登録ボタン |
-| Ranking | **ゲームごとに独立**したランキング |
-| Settings | プレイヤー名編集、音量 |
+| 画面 | 世界 | 役割 |
+|------|------|------|
+| Boot | HTML | `index.html` の初期ロード。Phaser バンドルとアセットの遅延読み込みを開始 |
+| Title | HTML | プラットフォームの顔。立ち絵、ロゴ、「あそぶ」「設定」 |
+| GameSelect | HTML | リリース済みゲームを一覧表示（カード） |
+| 個別ゲーム本体 | **Phaser** | 各ゲームが独自にシーン管理。プラットフォームの `PhaserHost` が `<canvas>` を mount |
+| Result | HTML | ゲーム終了後のスコア表示。プレイヤー名入力 + ランキング登録ボタン |
+| Ranking | HTML | **ゲームごとに独立**したランキング（テーブル表示） |
+| Settings | HTML | プレイヤー名編集、音量 |
+
+**境界の責務**
+- **HTML → Phaser**：`PhaserHost.mount(container, gameDefinition)` でゲーム起動
+- **Phaser → HTML**：ゲーム終了時、Phaser シーンが `gameOver` イベントを emit（スコアと metadata を含む）。`PhaserHost` がそれを受け取り、HTML ルーターに通知 → Result ページ表示
+- **データ受け渡し**：スコア・metadata は in-memory ストア（`platform/services/PendingResult.ts` のような単純なシングルトン）で次画面へ引き渡す
 
 ### 2-2. 共通モジュール（プラットフォーム層）
 
-| モジュール | 責務 |
-|------------|------|
-| `SupabaseClient` | Supabase 接続の一元管理 |
-| `ScoreService` | スコア送信・取得（`game_id` を引数で受ける） |
-| `PlayerNameStore` | プレイヤー名の localStorage 管理、NGワードフィルタ |
-| `SoundManager` | BGM・SE の一括制御、音量設定 |
-| `GameRegistry` | リリース済みゲーム一覧の定義（カード表示用メタデータ） |
-| `UI` | 共通ボタン・モーダル・トースト等 |
+| モジュール | 世界 | 責務 |
+|------------|------|------|
+| `Router` | HTML | ハッシュベースの簡易ルーター（`#/`、`#/games/:id`、`#/games/:id/result`、`#/games/:id/ranking`、`#/settings`） |
+| `PhaserHost` | HTML→Phaser | ゲーム本体の Phaser インスタンスを生成・破棄。`MiniGameDefinition` を受け取り `<canvas>` を指定コンテナに mount、`gameOver` イベントを受けて HTML 側へ通知 |
+| `SupabaseClient` | 共通 | Supabase 接続の一元管理 |
+| `ScoreService` | 共通 | スコア送信・取得（`game_id` を引数で受ける） |
+| `PlayerNameStore` | 共通 | プレイヤー名の localStorage 管理、NGワードフィルタ |
+| `SoundManager` | 共通 | BGM・SE の一括制御、音量設定 |
+| `GameRegistry` | HTML | リリース済みゲーム一覧の定義（カード表示用メタデータ） |
+| `PendingResult` | 共通 | ゲーム終了直後のスコア・metadata を Result 画面へ受け渡す in-memory ストア |
+| `ui/` | HTML | 共通HTMLパーツのレンダリング関数（ボタン、モーダル、トースト等）。素のTSでテンプレート文字列ベース |
 
 ### 2-3. ゲームの組み込みインターフェース（叩き台）
 
 ```typescript
+// 各ゲームは MiniGameDefinition を default export する
 interface MiniGameDefinition {
-  id: string;                       // 'endless_run' 等、Supabase の game_id と一致
-  title: string;                    // 「ぷかるんラン」
-  description: string;              // 1〜2行の紹介文
-  thumbnail: string;                // GameSelect で表示
+  id: string;                                  // 'endless_run' 等、Supabase の game_id と一致
+  title: string;                               // 「ぷかるんラン」
+  description: string;                         // 1〜2行の紹介文
+  thumbnail: string;                           // GameSelect で表示
   status: 'released' | 'coming_soon';
-  scenes: Phaser.Scene[];           // ゲーム本体のシーン群
-  startSceneKey: string;            // エントリポイント
+
+  // Phaser 本体の設定。PhaserHost がこれを使って Phaser.Game を生成
+  phaser: {
+    scenes: (typeof Phaser.Scene)[];           // ゲーム本体のシーンクラス群
+    startSceneKey: string;                     // エントリポイント
+  };
 }
 ```
+
+```typescript
+// プラットフォーム側：PhaserHost がライフサイクルを管理
+class PhaserHost {
+  mount(
+    container: HTMLElement,
+    def: MiniGameDefinition,
+    onGameOver: (score: number, metadata: object) => void
+  ): void;
+
+  unmount(): void;                             // Phaser.Game.destroy() を呼ぶ
+}
+```
+
+ゲーム本体の Phaser シーンは、ゲーム終了時に `this.game.events.emit('gameOver', { score, metadata })` を発火する規約。`PhaserHost` がそれを listen し、`onGameOver` コールバック経由で HTML ルーターへ通知する。
 
 GameSelect は `GameRegistry` を参照して、`released` のものだけプレイ可能にする。
 
@@ -86,33 +123,53 @@ GameSelect は `GameRegistry` を参照して、`released` のものだけプレ
 ## 3. ディレクトリ構造（実装方針）
 
 ```
+index.html                         # SPA エントリ。<div id="app"> を含む
 src/
+  main.ts                          # ルーター起動、初期画面表示
   platform/
-    scenes/
-      Boot.ts
-      Title.ts
-      GameSelect.ts
-      Settings.ts
+    router.ts                      # ハッシュベースの簡易ルーター
+    phaserHost.ts                  # ゲーム本体の Phaser インスタンスを mount/unmount
+    views/                         # HTML ビュー（各画面の描画関数）
+      title.ts                     #   render(container): void の形で実装
+      gameSelect.ts
+      settings.ts
+      gamePlay.ts                  #   PhaserHost に委譲する薄いラッパー
+      result.ts
+      ranking.ts
     services/
       SupabaseClient.ts
       ScoreService.ts
       PlayerNameStore.ts
       SoundManager.ts
-    ui/
-      Button.ts
-      Modal.ts
-    registry.ts                # ゲーム一覧
-    ngwords.ts                 # NGワード簡易リスト
+      PendingResult.ts             # 直近ゲーム終了時のスコアを Result 画面へ引き渡す
+    ui/                            # 共通HTMLパーツ（テンプレート関数）
+      button.ts
+      modal.ts
+      toast.ts
+    styles/                        # 共通CSS
+      reset.css
+      tokens.css                   # シンボルカラー等のCSSカスタムプロパティ
+      layout.css
+    registry.ts                    # ゲーム一覧
+    ngwords.ts                     # NGワード簡易リスト
   games/
     pukarun-run/
-      index.ts                 # MiniGameDefinition をエクスポート
+      index.ts                     # MiniGameDefinition を default export
       scenes/
-        Game.ts
-        Result.ts              # ※ Result は共通化候補、当面はゲーム個別
+        GameScene.ts               # Phaser シーン（ゲーム本体）
       config.ts
       assets/
-  main.ts
 ```
+
+**ビューの実装規約（素TS）**
+- 各ビューは `render(container: HTMLElement, params?: …): () => void` のシグネチャ
+- 戻り値はクリーンアップ関数（イベントリスナー解除、タイマー停止）
+- ルーターは画面遷移時に「前の画面のクリーンアップ → 新しい画面の描画」を順に実行
+
+**スタイル規約**
+- グローバルCSSはトークン定義（色、間隔）に限定
+- 画面ごとのスタイルは `views/title.css` のように同名で配置、`import './title.css'` で読み込み
+- BEM などの命名規則で衝突を避ける（CSS-in-JS は使わない）
 
 ゲーム追加時は `src/games/00x-xxx/` を作り、`registry.ts` に `import` を1行追加するだけで一覧に出る、という体験を狙う。
 

@@ -17,7 +17,9 @@ pnpm create @phaserjs/game@latest
 
 技術スタック（決定済み、`architecture-decision-record.md` 参照）：
 
-- **Phaser.js**（ゲームエンジン）+ **TypeScript** + **Vite**
+- **TypeScript** + **Vite**
+- **プラットフォームUIレイヤー**：素のHTML/CSS/TS（Title / GameSelect / Settings / Ranking / Result）。UIフレームワーク（React / Svelte / Vue）は採用しない
+- **個別ゲーム本体**：**Phaser.js**（ゲームの `Game` シーンのみ）。`PhaserHost` が `<canvas>` を mount/unmount
 - ホスティング：**Cloudflare Pages**（main への push で自動デプロイ）
 - スコア保存：**Supabase**（PostgreSQL + REST）
 
@@ -45,6 +47,7 @@ pnpm create @phaserjs/game@latest
 | `platform-design.md` | **プラットフォーム層の設計**：シーン構成、共通サービス、DBスキーマ、ゲーム追加ワークフロー |
 | `games/001-pukarun-run.md` | Game #1（エンドレスラン）の仕様。今後追加するゲームの仕様書テンプレート |
 | `game-concept-draft.md` | オーナーの回答入りヒアリングシート。元の意図を確認したいとき参照 |
+| `ideas.md` | **構想メモ（ブレスト用）**：未確定の演出・小ネタ、Game #2以降の候補、プラットフォーム全体の世界観アイデア。育ったら各仕様書へ昇格 |
 
 設計判断がプラットフォームか個別ゲームか曖昧なときは、**共通領域は `platform-design.md` を正とする**。個別ゲーム固有のルール・データは各ゲームのファイルが責任を持つ。
 
@@ -53,14 +56,29 @@ pnpm create @phaserjs/game@latest
 ### ディレクトリ構成（コード作成後）
 
 ```
+index.html       # SPA エントリ
 src/
-  platform/      # 共通シェル：Boot, Title, GameSelect, Settings, services
-    services/    # SupabaseClient, ScoreService, PlayerNameStore, SoundManager
+  main.ts        # ルーター起動
+  platform/      # 共通シェル（HTML世界）
+    router.ts    # ハッシュベースの簡易ルーター
+    phaserHost.ts # ゲーム本体の Phaser インスタンスを mount/unmount
+    views/       # HTMLビュー：title, gameSelect, settings, gamePlay, result, ranking
+    services/    # SupabaseClient, ScoreService, PlayerNameStore, SoundManager, PendingResult
+    ui/          # 共通HTMLパーツ（button, modal, toast）
+    styles/      # 共通CSS（reset, tokens, layout）
     registry.ts  # GameSelect に表示するゲーム一覧
     ngwords.ts   # プレイヤー名用の簡易NGワードリスト
   games/
-    pukarun-run/ # 1ゲーム = 1ディレクトリ。MiniGameDefinition をエクスポート
+    pukarun-run/ # 1ゲーム = 1ディレクトリ。MiniGameDefinition を default export
+                 # 中身は scenes/（Phaser）と assets/、config.ts のみ
 ```
+
+### HTML世界とPhaser世界の境界
+
+- **プラットフォーム画面（Title / GameSelect / Settings / Result / Ranking）は素のHTML/CSS/TS**で書く。Phaser シーンとして実装してはいけない
+- **Phaser は個別ゲーム本体（`src/games/*/scenes/`）でのみ使用**。プラットフォーム側からは `PhaserHost.mount()` 経由で起動する
+- ゲーム終了時、Phaser シーンは `this.game.events.emit('gameOver', { score, metadata })` を発火する規約。`PhaserHost` がそれを受けて HTML ルーターに通知し Result 画面へ遷移
+- ビュー関数のシグネチャは `render(container, params?): () => void`（戻り値はクリーンアップ関数）
 
 ### ゲーム追加ワークフロー（このシンプルさを必ず維持する）
 
